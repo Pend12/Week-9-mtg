@@ -7,7 +7,6 @@
 
 import SwiftUI
 
-import Foundation
 struct Card: Codable {
     let object: String
     let total_cards: Int
@@ -83,7 +82,6 @@ struct CardData: Codable {
     let purchase_uris: PurchaseURIs?
 }
 
-
 struct ImageURIs: Codable {
     let small: String?
     let normal: String?
@@ -142,33 +140,53 @@ struct PurchaseURIs: Codable {
 struct ContentView: View {
     @State private var searchText: String = ""
     @State private var cards: [CardData] = []
+    @State private var sortOption: SortOption = .color
+
+    enum SortOption {
+        case color
+        case alphabet
+    }
+
+    var sortedCards: [CardData] {
+        switch sortOption {
+        case .color:
+            return cards
+        case .alphabet:
+            return cards.sorted { card1, card2 in
+                guard let name1 = card1.name, let name2 = card2.name else {
+                    return false
+                }
+                return name1.localizedStandardCompare(name2) == .orderedAscending
+            }
+        }
+    }
 
     var body: some View {
         NavigationView {
             VStack {
                 SearchBar(text: $searchText)
-                    .padding(.horizontal)
-                List(cards.filter { card in
-                    searchText.isEmpty || card.name?.localizedCaseInsensitiveContains(searchText) == true
-                }, id: \.id) { card in
-                    VStack(alignment: .leading) {
-                        Text(card.name ?? "")
-                            .font(.headline)
-                        Text(card.mana_cost ?? "")
-                            .font(.subheadline)
-                        Text(card.type_line ?? "")
-                            .font(.subheadline)
-                        Text(card.oracle_text ?? "")
-                            .font(.body)
-                        AsyncImage(url: URL(string: card.image_uris?.normal ?? "")!) { image in
-                            image
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                        } placeholder: {
-                            ProgressView()
+                    .padding()
+
+                Picker("Sort By", selection: $sortOption) {
+                    Text("Color").tag(SortOption.color)
+                    Text("Alphabet").tag(SortOption.alphabet)
+                }
+                .pickerStyle(SegmentedPickerStyle())
+                .padding()
+
+                ScrollView {
+                    LazyVGrid(columns: createGrid(), spacing: 16) {
+                        ForEach(sortedCards.filter { card in
+                            searchText.isEmpty || (card.name ?? "").localizedCaseInsensitiveContains(searchText)
+                        }, id: \.name) { card in
+                            NavigationLink(destination: CardDetailView(card: card)) {
+                                CardView(card: card)
+                            }
                         }
                     }
+                    .padding(16)
                 }
+
                 Spacer()
             }
             .navigationTitle("Search Cards")
@@ -187,44 +205,128 @@ struct ContentView: View {
             }
         }
     }
+
+    private func createGrid() -> [GridItem] {
+        Array(repeating: GridItem(.flexible()), count: 4)
+    }
 }
 
 struct SearchBar: View {
     @Binding var text: String
-    
+
     var body: some View {
-        HStack {
-            TextField("Search", text: $text)
-                .padding(7)
-                .padding(.horizontal, 25)
-                .background(Color(.systemGray6))
-                .cornerRadius(8)
-                .overlay(
-                    HStack {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundColor(.gray)
-                            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                            .padding(.leading, 8)
-                        
-                        if !text.isEmpty {
-                            Button(action: {
-                                self.text = ""
-                            }) {
-                                Image(systemName: "multiply.circle.fill")
-                                    .foregroundColor(.gray)
-                                    .padding(.trailing, 8)
+        TextField("Search ", text: $text)
+            .padding(8)
+            .background(Color(.systemGray6))
+            .cornerRadius(8)
+            .padding(.horizontal, 10)
+            .autocapitalization(.none)
+    }
+}
+
+struct CardView: View {
+    let card: CardData
+
+    var body: some View {
+        AsyncImage(url: URL(string: card.image_uris?.normal ?? "")!) { image in
+            image
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+        } placeholder: {
+            ProgressView()
+        }
+        .padding()
+        .background(Color.gray.opacity(0.2))
+        .cornerRadius(10)
+    }
+}
+
+struct CardDetailView: View {
+    let card: CardData
+    @State private var displayOption: DisplayOption = .oracleText
+
+    enum DisplayOption {
+        case oracleText
+        case legalities
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading) {
+                AsyncImage(url: URL(string: card.image_uris?.large ?? "")!) { image in
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                } placeholder: {
+                    ProgressView()
+                }
+                .padding()
+
+                if let name = card.name {
+                    Text(name)
+                        .font(.title)
+                        .padding()
+                }
+
+                Picker("Display Option", selection: $displayOption) {
+                    Text("Oracle Text").tag(DisplayOption.oracleText)
+                    Text("Legalities").tag(DisplayOption.legalities)
+                }
+                .pickerStyle(SegmentedPickerStyle())
+                .padding()
+
+                if displayOption == .oracleText, let oracleText = card.oracle_text {
+                    Text(oracleText)
+                        .font(.body)
+                        .padding()
+                } else if displayOption == .legalities, let legalities = card.legalities?.toDictionary() {
+                    ForEach(Array(legalities.keys).sorted(), id: \.self) { key in
+                        if let value = legalities[key] {
+                            HStack {
+                                Text(key)
+                                    .font(.headline)
+                                    .padding()
+
+                                Text(value)
+                                    .font(.headline)
+                                    .padding()
+                                    .background(value == "legal" ? Color.green : Color.gray)
+                                    .foregroundColor(.white)
+                                    .padding(4)
+                                    .cornerRadius(4)
+
+                                Spacer()
                             }
                         }
                     }
-                )
-                .padding(.horizontal, 10)
-                .autocapitalization(.none)
+                }
+
+                Spacer()
+            }
+            .navigationBarTitleDisplayMode(.inline)
         }
     }
 }
 
+extension Legalities {
+    func toDictionary() -> [String: String] {
+        return Mirror(reflecting: self).children.reduce(into: [String: String]()) { dict, child in
+            if let key = child.label {
+                dict[key] = child.value as? String
+            }
+        }
+    }
+}
+
+
 struct ContentView_Previews: PreviewProvider {
     static var previews: some View {
         ContentView()
+    }
+}
+
+extension Dictionary where Key == String {
+    var dictionary: [(String, Value?)] {
+        map { ($0, $1) }
     }
 }
